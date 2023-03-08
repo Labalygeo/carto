@@ -1,0 +1,192 @@
+---
+title: "Initiation à Markdown"
+author: "Labaly"
+subtitle: "Séance 1"
+date: "`r Sys.Date()`"
+output:
+  rmdformats::readthedown:
+    highlight: kate
+---
+
+```{r setup, include=FALSE}
+## Global options
+knitr::opts_chunk$set(cache = TRUE)
+```
+
+#Import des librairies
+
+Maintenant, on importe des librairies qui vont servir de faire le travail. On met()le nom du package.
+
+```{r}
+library(osrm)
+library(sf)
+library(tidygeocoder)
+library(maptiles)
+library(mapview)
+```
+# Création du dataframe sur ugb 
+Avec geocode, on crée une table qui extrait automatiquement les coordonnées x et y de la localisation de l'UGB. Nous avons donné le nom UGB_loc à l'objet.
+
+```{r Partie 1,eval=TRUE, echo=FALSE,message=FALSE}
+UGB <-data.frame(name = "UGB",
+                 adresse = "Université Gaston Berger ")
+UGB_loc <-geocode(.tbl = UGB, address = adresse)
+ugb_transf  <- st_as_sf(UGB_loc, coords = c("long", "lat"), crs = 4326)
+plot(st_geometry(ugb_transf))
+```
+# Création du centroide sur la base de la couche region
+Sur la base de la couche des régions du Sénégal, nous avons  généré le centroide de chaque région.La fonction get() nous a permis de savoir dans quel dossier est sauvegardé notre projet. Nous avons donné le nom reg à la couche des régions et centr_reg pour la couche des centroides.
+```{r 2 creation du centroide }
+getwd()
+reg <-st_read("data/lim_reg.shp")
+centr_reg <- st_centroid(reg)
+```
+# Afficher la couche des centroides 
+La librairie mapview permet d'afficher la couche.On met () le nom de l'objet que l'on veut afficher. 
+```{r}
+mapView(centr_reg)
+```
+
+# transformation de la projection 
+```{r transfproj}
+reg_sf <- st_transform(centr_reg, crs = 3857)
+```
+
+# Transformation de la projection de la couche de localisation de UGB
+La fonction crs permet de préciser le systéme de projcetion. on peut aussi lui indiquer de reproejet sur la base d'une couche existante  en utilisant la fonction st_crs et on let ()la projection de la couche qu'on veut utiliser. 
+
+```{r}
+ugb_pr <-st_transform(ugb_transf, crs= st_crs(reg_sf))
+```
+
+# Calcul de la distance entre le point de localisation de UGB et les capitales régionales
+la fonction st_distance permet de calculer la distance entre deux points. Ici , nous avons pris la distance entre UGB et tous les centroides des régions. 
+
+```{r Partie 3: Calcul des distances}
+reg_dist <- st_distance(x = ugb_pr, y = reg_sf)
+```
+
+# Import des tuiles OSM sur la base de la couche des centroides des regions 
+
+```{r Partie 4: TuileS OSM}
+library(maptiles)
+osm_tiles <- get_tiles(x = st_buffer(centr_reg, 30000), zoom = 8, crop = TRUE)
+```
+# Lancer les tuiles OSM
+Pour chaque objet, on peut lui specifier les caractéristiques en terme d'affichage telles que les bordures, les couleurs, la taille. Ici, la focntion plot(st_geometry) et la couche qu'on veut afficher (). mtext a permis d'afficher le texte pour le crédit.
+```{r}
+plot_tiles(osm_tiles)
+plot(st_geometry(ugb_pr ), border = NA, col="black" , cex = 6, pch = 20, add = TRUE)
+plot(st_geometry(centr_reg), border = NA, col="red" , cex = 2, pch = 20, add = TRUE)
+mtext(side = 0.2, line = -1, text = get_credit("OpenStreetMap"), col="tomato")
+```
+# Calcul de la distance euclidienne 
+L'opération ci-dessous permet de calculer la distance euclidienne. 
+```{r Partie 5: Calcul des distances }
+mat_eucli_km <- st_distance(x = ugb_pr, y = reg_sf)
+```
+
+Créer de nouvelles colonnes.
+
+```{r}
+rownames(mat_eucli_km) <- reg_sf$name
+colnames(mat_eucli_km) <- reg_sf$agglosName
+```
+Lancer la librairie OSRM
+
+```{r}
+library(osrm)
+```
+# Calcul de la distance entre ugb et les centroides des regions 
+
+```{r}
+dist <- osrmTable(src = ugb_transf, 
+                  dst = centr_reg,
+                  measure = c("distance", "duration"))
+```
+
+# Calcul des distances
+
+```{r}
+#création d'une colonne ugb_eucli... qui contiendra les données de la distance euclidienne  en km
+
+centr_reg$ugb_eucli_dist <- as.numeric(mat_eucli_km) / 1000
+
+#création d'une colonne ugb_eucli... qui contiendra les données de la distance par la route   en km
+
+centr_reg$ugb_route_km <- as.numeric(dist$distances) / 1000
+
+#création d'une colonne ugb_eucli... qui contiendra les données dela durée en heure
+centr_reg$ugb_route_hr <- as.numeric(dist$durations) / 60
+
+#Calcul de la moyenne , max de la distance euclidienne
+mean(centr_reg$ugb_eucli_dist)
+max(centr_reg$ugb_eucli_dist)
+
+#Calcul de la moyenne , max de la distance par la route
+mean(centr_reg$ugb_route_km)
+max(centr_reg$ugb_route_km)
+
+#Calcul de la moyenne , max de la durée
+mean(centr_reg$ugb_route_hr)
+max(centr_reg$ugb_route_hr)
+```
+# Calcul des indices
+
+```{r}
+# Calcul des indices 
+centr_reg$ind_sinuo <- round(centr_reg$ugb_route_km / centr_reg$ugb_eucli_dist, 2)
+
+centr_reg$ind_speed <- round(centr_reg$ugb_route_km / centr_reg$ugb_route_hr, 1)
+
+centr_reg$ind_perf <- round(centr_reg$ind_speed / centr_reg$ind_sinuo, 1)
+```
+
+Lancer la library mapsf
+
+```{r Partie 6: Affichage des résultats}
+library(mapsf)
+```
+
+# Affichage des données sur la tuile OSM
+
+```{r}
+plot_tiles(osm_tiles)
+mf_map(x = centr_reg,
+       var = "ind_perf",
+       type = "choro",
+       pal = "Dark Mint",
+       leg_pos = "bottomleft2",
+       leg_title = "Indice de performance globale",
+       breaks = "jenks",
+       nbreaks = 8,
+       leg_val_rnd = 0,
+       border=NA,
+       cex = 2,
+       add = TRUE)
+
+plot(st_geometry(ugb_pr), border = "red", col="red" , lwd = 10, pch = 20, add = TRUE)
+mtext(side = 1, line = -1, text = get_credit("OpenStreetMap"), col="tomato")
+
+city_max_perf <- centr_reg[centr_reg$ind_perf == max(centr_reg$ind_perf),]
+
+route <- osrmRoute(src = ugb_transf, dst = city_max_perf)
+
+plot_tiles(osm_tiles)
+plot(st_geometry(route), col = "grey10", lwd = 6, add = TRUE)
+plot(st_geometry(route), col = "grey90", lwd = 1, add = TRUE)
+plot(st_geometry(ugb_transf), border = NA, col="red", pch = 20, cex = 3, add = TRUE)
+plot(st_geometry(city_max_perf), border = NA, col="red", pch = 20, cex = 3, add = TRUE)
+mtext(side = 1, line = -1, text = get_credit("OpenStreetMap"), col="tomato")
+```
+
+
+
+
+
+
+
+
+
+
+
